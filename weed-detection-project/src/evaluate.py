@@ -9,7 +9,7 @@ from src.data_loader import WeedDataset
 from torch.utils.data import DataLoader
 import os
 from datetime import datetime
-from PIL import Image  # Added import for Image
+from PIL import Image
 
 try:
     from fvcore.nn import FlopCountAnalysis
@@ -18,12 +18,11 @@ except ImportError:
     FLOPS_AVAILABLE = False
     print("fvcore not available, FLOPs calculation disabled")
 
+# Initialize GPU_MONITORING as False by default
+GPU_MONITORING = False
 try:
     import pynvml
-    pynvml.nvmlInit()
-    GPU_MONITORING = True
 except ImportError:
-    GPU_MONITORING = False
     print("pynvml not available, GPU monitoring disabled")
 
 class ModelEvaluator:
@@ -35,10 +34,19 @@ class ModelEvaluator:
         self.model.to(self.device)
         self.model.eval()
         
-        if GPU_MONITORING and self.device == 'cuda':
-            self.handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        # Attempt to initialize pynvml only if available and device is cuda
+        self.handle = None
+        if self.device == 'cuda' and 'pynvml' in globals():
+            try:
+                pynvml.nvmlInit()
+                self.handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                global GPU_MONITORING
+                GPU_MONITORING = True
+            except pynvml.NVMLError:
+                print("Failed to initialize pynvml, GPU monitoring disabled")
+                GPU_MONITORING = False
         
-        # Define transform for visualization
+        # Define transform for visualization, matching data_loader.py
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], 
@@ -181,7 +189,7 @@ class ModelEvaluator:
             try:
                 gpu_memory = pynvml.nvmlDeviceGetMemoryInfo(self.handle).used / (1024**2)
                 gpu_memory = f"{gpu_memory:.1f} MB"
-            except:
+            except pynvml.NVMLError:
                 gpu_memory = "Error retrieving GPU memory"
         
         report = f"""
