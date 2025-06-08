@@ -19,9 +19,6 @@ This project implements a deep learning-based weed detection system using semant
 - **CWFID Dataset**: Contains 40 training samples and 21 test samples.
 - **Classes**: Soil (0), Crop (1), Weed (2).
 - **Image Size**: 512x512 pixels (RGB).
-- **Class Distribution**: 
-  - To be verified using `check_class_distribution.py`. Suspected absence of Crop (1) pixels in the test set based on evaluation results.
-  - Current Confusion Matrix suggests severe class imbalance, with no Crop (1) pixels detected.
 
 ## Models
 - **Segformer**: A transformer-based model (`nvidia/mit-b0`) leveraging attention mechanisms for robust feature extraction, suitable for high-accuracy segmentation.
