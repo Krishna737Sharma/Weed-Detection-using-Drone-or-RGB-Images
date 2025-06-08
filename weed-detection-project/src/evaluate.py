@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import time
 import psutil
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, average_precision_score
 import matplotlib.pyplot as plt
 import torchvision.transforms as transforms
 from src.data_loader import WeedDataset
@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 import os
 from datetime import datetime
 from PIL import Image
+from skimage.metrics import structural_similarity as ssim, peak_signal_noise_ratio as psnr
 
 try:
     from fvcore.nn import FlopCountAnalysis
@@ -18,7 +19,6 @@ except ImportError:
     FLOPS_AVAILABLE = False
     print("fvcore not available, FLOPs calculation disabled")
 
-# Initialize GPU_MONITORING as False by default
 GPU_MONITORING = False
 try:
     import pynvml
@@ -34,7 +34,6 @@ class ModelEvaluator:
         self.model.to(self.device)
         self.model.eval()
         
-        # Attempt to initialize pynvml only if available and device is cuda
         self.handle = None
         if self.device == 'cuda' and 'pynvml' in globals():
             try:
@@ -44,65 +43,95 @@ class ModelEvaluator:
                 GPU_MONITORING = True
             except pynvml.NVMLError:
                 print("Failed to initialize pynvml, GPU monitoring disabled")
-                GPU_MONITORING = False
         
-        # Define transform for visualization, matching data_loader.py
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                               std=[0.229, 0.224, 0.225])
+                                 std=[0.229, 0.224, 0.225])
         ])
     
     def evaluate_accuracy(self):
-        """Evaluate model accuracy"""
+        """Evaluate model accuracy and additional metrics"""
         test_dataset = WeedDataset(self.X_test, self.y_test, transform=self.transform)
         test_loader = DataLoader(test_dataset, batch_size=4, shuffle=False)
         
         all_preds = []
         all_labels = []
+        ap_scores = []
+        ssim_scores = []
+        psnr_scores = []
+        mse_scores = []
         
         with torch.no_grad():
             for images, masks in test_loader:
                 images = images.to(self.device)
                 outputs = self.model(pixel_values=images) if hasattr(self.model, 'model') else self.model(images)
                 
-                # Handle different output formats
                 logits = outputs.logits if hasattr(outputs, 'logits') else outputs
-                
-                # Resize if needed
                 if logits.shape[-2:] != masks.shape[-2:]:
                     logits = torch.nn.functional.interpolate(
                         logits, size=masks.shape[-2:], mode='bilinear', align_corners=False
                     )
                 
-                preds = torch.argmax(logits, dim=1).cpu().numpy()
-                all_preds.extend(preds.flatten())
+                preds = torch.argmax(logits, dim=1)
+                all_preds.extend(preds.cpu().numpy().flatten())
                 all_labels.extend(masks.cpu().numpy().flatten())
+                
+                # Compute per-class Average Precision (mAP)
+                pred_probs = torch.softmax(logits, dim=1).cpu().numpy()  # [B, C, H, W]
+                true_masks = masks.cpu().numpy()  # [B, H, W]
+                for b in range(preds.shape[0]):
+                    for c in range(3):  # 3 classes
+                        pred_prob = pred_probs[b, c].flatten()
+                        true_mask = (true_masks[b] == c).flatten()
+                        if np.sum(true_mask) > 0:  # Skip if no positive pixels
+                            ap = average_precision_score(true_mask, pred_prob)
+                            if not np.isnan(ap):
+                                ap_scores.append(ap)
+                
+                # Compute SSIM, PSNR, MSE
+                for i in range(preds.shape[0]):
+                    pred_mask = preds[i].cpu().numpy().astype(np.uint8)
+                    true_mask = masks[i].cpu().numpy().astype(np.uint8)
+                    ssim_score = ssim(pred_mask, true_mask, data_range=2, channel_axis=None)
+                    psnr_score = psnr(pred_mask, true_mask, data_range=2)
+                    mse_score = np.mean((pred_mask - true_mask) ** 2)
+                    ssim_scores.append(ssim_score)
+                    psnr_scores.append(psnr_score)
+                    mse_scores.append(mse_score)
         
         accuracy = accuracy_score(all_labels, all_preds)
         precision = precision_score(all_labels, all_preds, average='weighted', zero_division=0)
         recall = recall_score(all_labels, all_preds, average='weighted', zero_division=0)
         f1 = f1_score(all_labels, all_preds, average='weighted', zero_division=0)
+        conf_matrix = confusion_matrix(all_labels, all_preds, labels=[0, 1, 2])
+        mAP = np.mean(ap_scores) if ap_scores else 0.0
+        avg_ssim = np.mean(ssim_scores)
+        avg_psnr = np.mean(psnr_scores)
+        avg_mse = np.mean(mse_scores)
         
         return {
             'accuracy': accuracy,
             'precision': precision,
             'recall': recall,
-            'f1_score': f1
+            'f1_score': f1,
+            'confusion_matrix': conf_matrix,
+            'mAP': mAP,
+            'ssim': avg_ssim,
+            'psnr': avg_psnr,
+            'mse': avg_mse
         }
     
     def measure_inference_time(self, num_samples=100):
         """Measure inference time"""
-        # Create a sample input with proper normalization
-        sample_input = torch.randn(1, 3, 512, 512)
-        sample_input = self.transform(sample_input).to(self.device)
+        sample_input = np.random.rand(1, 512, 512, 3).astype(np.float32) * 255
+        sample_input = sample_input[0]
+        sample_input = self.transform(sample_input).unsqueeze(0).to(self.device)
         
-        # Warmup
         for _ in range(10):
             with torch.no_grad():
                 _ = self.model(pixel_values=sample_input) if hasattr(self.model, 'model') else self.model(sample_input)
         
-        # Measure
         times = []
         for _ in range(num_samples):
             start_time = time.time()
@@ -111,7 +140,7 @@ class ModelEvaluator:
             if self.device == 'cuda':
                 torch.cuda.synchronize()
             end_time = time.time()
-            times.append((end_time - start_time) * 1000)  # Convert to ms
+            times.append((end_time - start_time) * 1000)
         
         return np.mean(times), np.std(times)
     
@@ -130,11 +159,9 @@ class ModelEvaluator:
             axes = axes.reshape(1, -1)
         
         for i in range(min(num_samples, len(self.X_test))):
-            # Original image (denormalized for visualization)
-            img = self.X_test[i].astype(float) / 255.0  # Assume X_test is in [0, 255]
+            img = self.X_test[i].astype(float) / 255.0
             img_tensor = self.transform(Image.fromarray(self.X_test[i])).unsqueeze(0).to(self.device)
             
-            # Denormalize for display
             mean = np.array([0.485, 0.456, 0.406])
             std = np.array([0.229, 0.224, 0.225])
             display_img = img * std + mean
@@ -144,12 +171,10 @@ class ModelEvaluator:
             axes[i, 0].set_title('Original Image')
             axes[i, 0].axis('off')
             
-            # Ground truth
             axes[i, 1].imshow(self.y_test[i], cmap='viridis', vmin=0, vmax=2)
             axes[i, 1].set_title('Ground Truth')
             axes[i, 1].axis('off')
             
-            # Prediction
             with torch.no_grad():
                 output = self.model(pixel_values=img_tensor) if hasattr(self.model, 'model') else self.model(img_tensor)
                 logits = output.logits if hasattr(output, 'logits') else output
@@ -165,8 +190,7 @@ class ModelEvaluator:
         
         plt.tight_layout()
         os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
-        plt.savefig(file_path, dpi=150, bbox_inches='tight')
-        plt.show()
+        plt.savefig(file_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Visualization saved to {file_path}")
     
@@ -174,16 +198,10 @@ class ModelEvaluator:
         """Generate comprehensive evaluation report"""
         print("Evaluating model performance...")
         
-        # Accuracy metrics
-        accuracy_metrics = self.evaluate_accuracy()
-        
-        # Performance metrics
+        metrics = self.evaluate_accuracy()
         avg_time, time_std = self.measure_inference_time()
-        
-        # Model complexity
         num_params = self.count_parameters()
         
-        # GPU memory usage
         gpu_memory = "N/A"
         if GPU_MONITORING and self.device == 'cuda':
             try:
@@ -191,6 +209,8 @@ class ModelEvaluator:
                 gpu_memory = f"{gpu_memory:.1f} MB"
             except pynvml.NVMLError:
                 gpu_memory = "Error retrieving GPU memory"
+        
+        conf_matrix_str = "\nConfusion Matrix:\n" + str(metrics['confusion_matrix'])
         
         report = f"""
 MODEL EVALUATION REPORT
@@ -201,10 +221,15 @@ Parameters: {num_params:,}
 
 Accuracy Metrics:
 -----------------
-Accuracy: {accuracy_metrics['accuracy']:.4f}
-Precision: {accuracy_metrics['precision']:.4f}
-Recall: {accuracy_metrics['recall']:.4f}
-F1-Score: {accuracy_metrics['f1_score']:.4f}
+Accuracy: {metrics['accuracy']:.4f}
+Precision: {metrics['precision']:.4f}
+Recall: {metrics['recall']:.4f}
+F1-Score: {metrics['f1_score']:.4f}
+Mean Average Precision (mAP): {metrics['mAP']:.4f}
+SSIM: {metrics['ssim']:.4f}
+PSNR: {metrics['psnr']:.4f}
+MSE: {metrics['mse']:.4f}
+{conf_matrix_str}
 
 Performance Metrics:
 --------------------
@@ -218,7 +243,6 @@ CPU Usage: {psutil.cpu_percent():.1f}%
 RAM Usage: {psutil.Process().memory_info().rss / (1024**2):.1f} MB
 GPU Memory Usage: {gpu_memory}
 """
-        
         return report
 
 class EfficiencyEvaluator:
@@ -235,7 +259,7 @@ class EfficiencyEvaluator:
         
         with torch.no_grad():
             flops = FlopCountAnalysis(self.model, self.test_input)
-            return flops.total() / 1e9  # Convert to GFLOPs
+            return flops.total() / 1e9
     
     def evaluate(self):
         """Basic efficiency evaluation"""
@@ -243,7 +267,6 @@ class EfficiencyEvaluator:
         results['parameters'] = sum(p.numel() for p in self.model.parameters())
         results['flops'] = self.calculate_flops()
         
-        # Timing
         times = []
         for _ in range(100):
             start = time.time()

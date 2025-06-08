@@ -65,8 +65,8 @@ def main():
             model=model,
             train_dataset=train_dataset,
             val_dataset=test_dataset,
-            epochs=25,
-            batch_size=8,
+            epochs=1,
+            batch_size=4,
             learning_rate=1e-4
         )
 
