@@ -279,7 +279,7 @@ print("Unique mask values:", np.unique(mask))
 
 1. **Fork the Repository**:
 ```bash
-git clone https://github.com/<your-username>/Weed-Detection-using-Drone-or-RGB-Images.git
+git clone https://github.com/Krishna737Sharma/Weed-Detection-using-Drone-or-RGB-Images.git
 ```
 
 2. **Create a Feature Branch**:
