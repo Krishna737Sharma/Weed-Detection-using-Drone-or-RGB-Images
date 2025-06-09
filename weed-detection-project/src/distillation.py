@@ -35,14 +35,14 @@ def create_teacher_student():
     # Teacher (large model)
     teacher = SegformerForSemanticSegmentation.from_pretrained(
         "nvidia/mit-b5",
-        num_labels=2,
+        num_labels=2,  # Updated to 2 classes
         ignore_mismatched_sizes=True
     )
     
     # Student (efficient model)
     student = SegformerForSemanticSegmentation.from_pretrained(
         "nvidia/mit-b0",
-        num_labels=2,
+        num_labels=2,  # Updated to 2 classes
         ignore_mismatched_sizes=True
     )
     

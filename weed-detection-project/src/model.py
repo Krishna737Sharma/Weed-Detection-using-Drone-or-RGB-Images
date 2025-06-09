@@ -7,7 +7,7 @@ class EfficientWeedDetector(nn.Module):
         super().__init__()
         self.model = SegformerForSemanticSegmentation.from_pretrained(
             model_name,
-            num_labels=num_classes,
+            num_labels=num_classes,  # 3 classes: background, crop, weed
             ignore_mismatched_sizes=True
         )
         

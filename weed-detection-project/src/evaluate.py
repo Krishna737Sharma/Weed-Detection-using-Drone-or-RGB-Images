@@ -51,7 +51,7 @@ class ModelEvaluator:
         ])
     
     def evaluate_accuracy(self):
-        """Evaluate model accuracy and additional metrics"""
+        """Evaluate model accuracy and additional metrics for 3 classes"""
         test_dataset = WeedDataset(self.X_test, self.y_test, transform=self.transform)
         test_loader = DataLoader(test_dataset, batch_size=4, shuffle=False)
         
@@ -77,19 +77,17 @@ class ModelEvaluator:
                 all_preds.extend(preds.cpu().numpy().flatten())
                 all_labels.extend(masks.cpu().numpy().flatten())
                 
-                # Compute per-class Average Precision (mAP)
-                pred_probs = torch.softmax(logits, dim=1).cpu().numpy()  # [B, C, H, W]
-                true_masks = masks.cpu().numpy()  # [B, H, W]
+                pred_probs = torch.softmax(logits, dim=1).cpu().numpy()
+                true_masks = masks.cpu().numpy()
                 for b in range(preds.shape[0]):
-                    for c in range(3):  # 3 classes
+                    for c in range(3):  # 3 classes: background, crop, weed
                         pred_prob = pred_probs[b, c].flatten()
                         true_mask = (true_masks[b] == c).flatten()
-                        if np.sum(true_mask) > 0:  # Skip if no positive pixels
+                        if np.sum(true_mask) > 0:
                             ap = average_precision_score(true_mask, pred_prob)
                             if not np.isnan(ap):
                                 ap_scores.append(ap)
                 
-                # Compute SSIM, PSNR, MSE
                 for i in range(preds.shape[0]):
                     pred_mask = preds[i].cpu().numpy().astype(np.uint8)
                     true_mask = masks[i].cpu().numpy().astype(np.uint8)
@@ -104,7 +102,7 @@ class ModelEvaluator:
         precision = precision_score(all_labels, all_preds, average='weighted', zero_division=0)
         recall = recall_score(all_labels, all_preds, average='weighted', zero_division=0)
         f1 = f1_score(all_labels, all_preds, average='weighted', zero_division=0)
-        conf_matrix = confusion_matrix(all_labels, all_preds, labels=[0, 1, 2])
+        conf_matrix = confusion_matrix(all_labels, all_preds, labels=[0, 1, 2])  # 3 classes
         mAP = np.mean(ap_scores) if ap_scores else 0.0
         avg_ssim = np.mean(ssim_scores)
         avg_psnr = np.mean(psnr_scores)
@@ -123,10 +121,9 @@ class ModelEvaluator:
         }
     
     def measure_inference_time(self, num_samples=100):
-        """Measure inference time"""
         sample_input = np.random.rand(1, 512, 512, 3).astype(np.float32) * 255
         sample_input = sample_input[0]
-        sample_input = self.transform(sample_input).unsqueeze(0).to(self.device)
+        sample_input = self.transform(Image.fromarray(sample_input.astype(np.uint8))).unsqueeze(0).to(self.device)
         
         for _ in range(10):
             with torch.no_grad():
@@ -145,15 +142,20 @@ class ModelEvaluator:
         return np.mean(times), np.std(times)
     
     def count_parameters(self):
-        """Count model parameters"""
         return sum(p.numel() for p in self.model.parameters())
     
     def visualize_results(self, num_samples=5, file_path='prediction_results.png'):
-        """Visualize some predictions"""
         if len(self.X_test) == 0:
             print("No test data available for visualization")
             return
             
+        # Color map for visualization
+        vis_color_map = {
+            0: [0, 0, 0],      # Black: Background
+            1: [0, 255, 0],    # Green: Crop
+            2: [255, 0, 0]     # Red: Weed
+        }
+        
         fig, axes = plt.subplots(num_samples, 3, figsize=(15, num_samples*5))
         if num_samples == 1:
             axes = axes.reshape(1, -1)
@@ -171,8 +173,13 @@ class ModelEvaluator:
             axes[i, 0].set_title('Original Image')
             axes[i, 0].axis('off')
             
-            axes[i, 1].imshow(self.y_test[i], cmap='viridis', vmin=0, vmax=2)
-            axes[i, 1].set_title('Ground Truth')
+            # Convert ground truth to RGB
+            gt_mask = self.y_test[i]
+            gt_rgb = np.zeros((gt_mask.shape[0], gt_mask.shape[1], 3), dtype=np.uint8)
+            for cls, color in vis_color_map.items():
+                gt_rgb[gt_mask == cls] = color
+            axes[i, 1].imshow(gt_rgb)
+            axes[i, 1].set_title('Ground Truth (Crop: Green, Weed: Red)')
             axes[i, 1].axis('off')
             
             with torch.no_grad():
@@ -184,8 +191,12 @@ class ModelEvaluator:
                     )
                 pred = torch.argmax(logits, dim=1).cpu().numpy()[0]
             
-            axes[i, 2].imshow(pred, cmap='viridis', vmin=0, vmax=2)
-            axes[i, 2].set_title('Prediction')
+            # Convert prediction to RGB
+            pred_rgb = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
+            for cls, color in vis_color_map.items():
+                pred_rgb[pred == cls] = color
+            axes[i, 2].imshow(pred_rgb)
+            axes[i, 2].set_title('Prediction (Crop: Green, Weed: Red)')
             axes[i, 2].axis('off')
         
         plt.tight_layout()
@@ -195,7 +206,6 @@ class ModelEvaluator:
         print(f"Visualization saved to {file_path}")
     
     def generate_metrics_report(self):
-        """Generate comprehensive evaluation report"""
         print("Evaluating model performance...")
         
         metrics = self.evaluate_accuracy()
@@ -253,7 +263,6 @@ class EfficiencyEvaluator:
         self.model.eval()
         
     def calculate_flops(self):
-        """Calculate FLOPs if fvcore is available"""
         if not FLOPS_AVAILABLE:
             return 0
         
@@ -262,7 +271,6 @@ class EfficiencyEvaluator:
             return flops.total() / 1e9
     
     def evaluate(self):
-        """Basic efficiency evaluation"""
         results = {}
         results['parameters'] = sum(p.numel() for p in self.model.parameters())
         results['flops'] = self.calculate_flops()

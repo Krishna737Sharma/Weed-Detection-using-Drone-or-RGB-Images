@@ -1,21 +1,26 @@
-Training Report - 2025-06-08 04:17:05
+Training Report - 2025-06-09 09:35:30
 ==================================================
 
-Final Validation Loss: 0.2698
-Final Validation IoU: 0.5772
+Final Validation Loss: 0.2555
+Final Validation IoU: 0.7422
 
-Final Training Loss: 0.3814
-Final Training IoU: 0.5580
+Final Training Loss: 0.2753
+Final Training IoU: 0.7441
 
 Best Validation Metrics:
-- Lowest Loss: 0.2698 (epoch 5)
-- Highest IoU: 0.5772 (epoch 5)
+- Lowest Loss: 0.2555 (epoch 10)
+- Highest IoU: 0.7422 (epoch 10)
 
 
 Training History:
 Epoch	Train Loss	Train IoU	Val Loss	Val IoU
-1	0.8889	0.3763	0.9744	0.4543
-2	0.6883	0.4675	0.8428	0.5078
-3	0.5554	0.5181	0.6481	0.5343
-4	0.4459	0.5476	0.4041	0.5691
-5	0.3814	0.5580	0.2698	0.5772
+1	0.8558	0.4391	0.9865	0.4399
+2	0.6268	0.5308	0.7670	0.5274
+3	0.5441	0.5909	0.6008	0.5853
+4	0.4768	0.6539	0.4638	0.6417
+5	0.4272	0.6912	0.3690	0.6873
+6	0.3850	0.7028	0.3725	0.6980
+7	0.3411	0.7262	0.3040	0.7266
+8	0.3233	0.7408	0.2690	0.7296
+9	0.2827	0.7645	0.2623	0.7417
+10	0.2753	0.7441	0.2555	0.7422
